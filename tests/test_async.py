@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 
 from jinja2 import ChainableUndefined
@@ -13,7 +11,7 @@ from jinja2.exceptions import UndefinedError
 from jinja2.nativetypes import NativeEnvironment
 
 
-def test_basic_async():
+def test_basic_async(run_async_fn):
     t = Template(
         "{% for item in [1, 2, 3] %}[{{ item }}]{% endfor %}", enable_async=True
     )
@@ -21,11 +19,11 @@ def test_basic_async():
     async def func():
         return await t.render_async()
 
-    rv = asyncio.run(func())
+    rv = run_async_fn(func)
     assert rv == "[1][2][3]"
 
 
-def test_await_on_calls():
+def test_await_on_calls(run_async_fn):
     t = Template("{{ async_func() + normal_func() }}", enable_async=True)
 
     async def async_func():
@@ -37,7 +35,7 @@ def test_await_on_calls():
     async def func():
         return await t.render_async(async_func=async_func, normal_func=normal_func)
 
-    rv = asyncio.run(func())
+    rv = run_async_fn(func)
     assert rv == "65"
 
 
@@ -54,7 +52,7 @@ def test_await_on_calls_normal_render():
     assert rv == "65"
 
 
-def test_await_and_macros():
+def test_await_and_macros(run_async_fn):
     t = Template(
         "{% macro foo(x) %}[{{ x }}][{{ async_func() }}]{% endmacro %}{{ foo(42) }}",
         enable_async=True,
@@ -66,11 +64,11 @@ def test_await_and_macros():
     async def func():
         return await t.render_async(async_func=async_func)
 
-    rv = asyncio.run(func())
+    rv = run_async_fn(func)
     assert rv == "[42][42]"
 
 
-def test_async_blocks():
+def test_async_blocks(run_async_fn):
     t = Template(
         "{% block foo %}<Test>{% endblock %}{{ self.foo() }}",
         enable_async=True,
@@ -80,7 +78,7 @@ def test_async_blocks():
     async def func():
         return await t.render_async()
 
-    rv = asyncio.run(func())
+    rv = run_async_fn(func)
     assert rv == "<Test><Test>"
 
 
@@ -156,8 +154,8 @@ class TestAsyncImports:
         test_env_async.from_string('{% from "foo" import bar, with, context %}')
         test_env_async.from_string('{% from "foo" import bar, with with context %}')
 
-    def test_exports(self, test_env_async):
-        coro = test_env_async.from_string(
+    def test_exports(self, test_env_async, run_async_fn):
+        coro_fn = test_env_async.from_string(
             """
             {% macro toplevel() %}...{% endmacro %}
             {% macro __private() %}...{% endmacro %}
@@ -166,9 +164,9 @@ class TestAsyncImports:
                 {% macro notthere() %}{% endmacro %}
             {% endfor %}
             """
-        )._get_default_module_async()
-        m = asyncio.run(coro)
-        assert asyncio.run(m.toplevel()) == "..."
+        )._get_default_module_async
+        m = run_async_fn(coro_fn)
+        assert run_async_fn(m.toplevel) == "..."
         assert not hasattr(m, "__missing")
         assert m.variable == 42
         assert not hasattr(m, "notthere")
@@ -457,17 +455,19 @@ class TestAsyncForLoop:
         )
         assert tmpl.render(items=reversed([3, 2, 1])) == "1,2,3"
 
-    def test_loop_errors(self, test_env_async):
+    def test_loop_errors(self, test_env_async, run_async_fn):
         tmpl = test_env_async.from_string(
             """{% for item in [1] if loop.index
                                       == 0 %}...{% endfor %}"""
         )
-        pytest.raises(UndefinedError, tmpl.render)
+        with pytest.raises(UndefinedError):
+            run_async_fn(tmpl.render_async)
+
         tmpl = test_env_async.from_string(
             """{% for item in [] %}...{% else
             %}{{ loop }}{% endfor %}"""
         )
-        assert tmpl.render() == ""
+        assert run_async_fn(tmpl.render_async) == ""
 
     def test_loop_filter(self, test_env_async):
         tmpl = test_env_async.from_string(
@@ -597,7 +597,7 @@ class TestAsyncForLoop:
         assert t.render(a=dict(b=[1, 2, 3])) == "1"
 
 
-def test_namespace_awaitable(test_env_async):
+def test_namespace_awaitable(test_env_async, run_async_fn):
     async def _test():
         t = test_env_async.from_string(
             '{% set ns = namespace(foo="Bar") %}{{ ns.foo }}'
@@ -605,10 +605,10 @@ def test_namespace_awaitable(test_env_async):
         actual = await t.render_async()
         assert actual == "Bar"
 
-    asyncio.run(_test())
+    run_async_fn(_test)
 
 
-def test_chainable_undefined_aiter():
+def test_chainable_undefined_aiter(run_async_fn):
     async def _test():
         t = Template(
             "{% for x in a['b']['c'] %}{{ x }}{% endfor %}",
@@ -618,7 +618,7 @@ def test_chainable_undefined_aiter():
         rv = await t.render_async(a={})
         assert rv == ""
 
-    asyncio.run(_test())
+    run_async_fn(_test)
 
 
 @pytest.fixture
@@ -626,22 +626,22 @@ def async_native_env():
     return NativeEnvironment(enable_async=True)
 
 
-def test_native_async(async_native_env):
+def test_native_async(async_native_env, run_async_fn):
     async def _test():
         t = async_native_env.from_string("{{ x }}")
         rv = await t.render_async(x=23)
         assert rv == 23
 
-    asyncio.run(_test())
+    run_async_fn(_test)
 
 
-def test_native_list_async(async_native_env):
+def test_native_list_async(async_native_env, run_async_fn):
     async def _test():
         t = async_native_env.from_string("{{ x }}")
         rv = await t.render_async(x=list(range(3)))
         assert rv == [0, 1, 2]
 
-    asyncio.run(_test())
+    run_async_fn(_test)
 
 
 def test_getitem_after_filter():
@@ -658,3 +658,65 @@ def test_getitem_after_call():
     t = env.from_string("{{ add_each(a, 2)[1:] }}")
     out = t.render(a=range(3))
     assert out == "[3, 4]"
+
+
+def test_basic_generate_async(run_async_fn):
+    t = Template(
+        "{% for item in [1, 2, 3] %}[{{ item }}]{% endfor %}", enable_async=True
+    )
+
+    async def func():
+        agen = t.generate_async()
+        try:
+            return await agen.__anext__()
+        finally:
+            await agen.aclose()
+
+    rv = run_async_fn(func)
+    assert rv == "["
+
+
+def test_include_generate_async(run_async_fn, test_env_async):
+    t = test_env_async.from_string('{% include "header" %}')
+
+    async def func():
+        agen = t.generate_async()
+        try:
+            return await agen.__anext__()
+        finally:
+            await agen.aclose()
+
+    rv = run_async_fn(func)
+    assert rv == "["
+
+
+def test_blocks_generate_async(run_async_fn):
+    t = Template(
+        "{% block foo %}<Test>{% endblock %}{{ self.foo() }}",
+        enable_async=True,
+        autoescape=True,
+    )
+
+    async def func():
+        agen = t.generate_async()
+        try:
+            return await agen.__anext__()
+        finally:
+            await agen.aclose()
+
+    rv = run_async_fn(func)
+    assert rv == "<Test>"
+
+
+def test_async_extend(run_async_fn, test_env_async):
+    t = test_env_async.from_string('{% extends "header" %}')
+
+    async def func():
+        agen = t.generate_async()
+        try:
+            return await agen.__anext__()
+        finally:
+            await agen.aclose()
+
+    rv = run_async_fn(func)
+    assert rv == "["
