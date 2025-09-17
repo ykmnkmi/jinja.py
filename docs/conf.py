@@ -24,7 +24,7 @@ autodoc_preserve_defaults = True
 extlinks = {
     "issue": ("https://github.com/pallets/jinja/issues/%s", "#%s"),
     "pr": ("https://github.com/pallets/jinja/pull/%s", "#%s"),
-    "ghsa": ("https://github.com/advisories/GHSA-%s", "GHSA-%s"),
+    "ghsa": ("https://github.com/pallets/jinja/security/advisories/GHSA-%s", "GHSA-%s"),
 }
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
@@ -49,7 +49,7 @@ html_sidebars = {
 }
 singlehtml_sidebars = {"index": ["project.html", "localtoc.html", "ethicalads.html"]}
 html_static_path = ["_static"]
-html_favicon = "_static/jinja-logo-sidebar.png"
-html_logo = "_static/jinja-logo-sidebar.png"
+html_favicon = "_static/jinja-icon.svg"
+html_logo = "_static/jinja-logo.svg"
 html_title = f"Jinja Documentation ({version})"
 html_show_sourcelink = False

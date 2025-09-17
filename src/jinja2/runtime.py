@@ -92,12 +92,12 @@ def str_join(seq: t.Iterable[t.Any]) -> str:
 
 def new_context(
     environment: "Environment",
-    template_name: t.Optional[str],
-    blocks: t.Dict[str, t.Callable[["Context"], t.Iterator[str]]],
-    vars: t.Optional[t.Dict[str, t.Any]] = None,
+    template_name: str | None,
+    blocks: dict[str, t.Callable[["Context"], t.Iterator[str]]],
+    vars: dict[str, t.Any] | None = None,
     shared: bool = False,
-    globals: t.Optional[t.MutableMapping[str, t.Any]] = None,
-    locals: t.Optional[t.Mapping[str, t.Any]] = None,
+    globals: t.MutableMapping[str, t.Any] | None = None,
+    locals: t.Mapping[str, t.Any] | None = None,
 ) -> "Context":
     """Internal helper for context creation."""
     if vars is None:
@@ -165,16 +165,16 @@ class Context:
     def __init__(
         self,
         environment: "Environment",
-        parent: t.Dict[str, t.Any],
-        name: t.Optional[str],
-        blocks: t.Dict[str, t.Callable[["Context"], t.Iterator[str]]],
-        globals: t.Optional[t.MutableMapping[str, t.Any]] = None,
+        parent: dict[str, t.Any],
+        name: str | None,
+        blocks: dict[str, t.Callable[["Context"], t.Iterator[str]]],
+        globals: t.MutableMapping[str, t.Any] | None = None,
     ):
         self.parent = parent
-        self.vars: t.Dict[str, t.Any] = {}
+        self.vars: dict[str, t.Any] = {}
         self.environment: Environment = environment
         self.eval_ctx = EvalContext(self.environment, name)
-        self.exported_vars: t.Set[str] = set()
+        self.exported_vars: set[str] = set()
         self.name = name
         self.globals_keys = set() if globals is None else set(globals)
 
@@ -244,11 +244,11 @@ class Context:
 
         return missing
 
-    def get_exported(self) -> t.Dict[str, t.Any]:
+    def get_exported(self) -> dict[str, t.Any]:
         """Get a new dict with the exported variables."""
         return {k: self.vars[k] for k in self.exported_vars}
 
-    def get_all(self) -> t.Dict[str, t.Any]:
+    def get_all(self) -> dict[str, t.Any]:
         """Return the complete context as dict including the exported
         variables.  For optimizations reasons this might not return an
         actual copy so be careful with using it.
@@ -307,7 +307,7 @@ class Context:
                 " StopIteration exception"
             )
 
-    def derived(self, locals: t.Optional[t.Dict[str, t.Any]] = None) -> "Context":
+    def derived(self, locals: dict[str, t.Any] | None = None) -> "Context":
         """Internal helper function to create a derived context.  This is
         used in situations where the system needs a new context in the same
         template that is independent.
@@ -348,7 +348,7 @@ class BlockReference:
         self,
         name: str,
         context: "Context",
-        stack: t.List[t.Callable[["Context"], t.Iterator[str]]],
+        stack: list[t.Callable[["Context"], t.Iterator[str]]],
         depth: int,
     ) -> None:
         self.name = name
@@ -367,7 +367,7 @@ class BlockReference:
 
     @internalcode
     async def _async_call(self) -> str:
-        rv = concat(
+        rv = self._context.environment.concat(  # type: ignore
             [x async for x in self._stack[self._depth](self._context)]  # type: ignore
         )
 
@@ -381,7 +381,9 @@ class BlockReference:
         if self._context.environment.is_async:
             return self._async_call()  # type: ignore
 
-        rv = concat(self._stack[self._depth](self._context))
+        rv = self._context.environment.concat(  # type: ignore
+            self._stack[self._depth](self._context)
+        )
 
         if self._context.eval_ctx.autoescape:
             return Markup(rv)
@@ -397,7 +399,7 @@ class LoopContext:
     #: Current iteration of the loop, starting at 0.
     index0 = -1
 
-    _length: t.Optional[int] = None
+    _length: int | None = None
     _after: t.Any = missing
     _current: t.Any = missing
     _before: t.Any = missing
@@ -406,7 +408,7 @@ class LoopContext:
     def __init__(
         self,
         iterable: t.Iterable[V],
-        undefined: t.Type["Undefined"],
+        undefined: type["Undefined"],
         recurse: t.Optional["LoopRenderFunc"] = None,
         depth0: int = 0,
     ) -> None:
@@ -556,7 +558,7 @@ class LoopContext:
     def __iter__(self) -> "LoopContext":
         return self
 
-    def __next__(self) -> t.Tuple[t.Any, "LoopContext"]:
+    def __next__(self) -> tuple[t.Any, "LoopContext"]:
         if self._after is not missing:
             rv = self._after
             self._after = missing
@@ -591,7 +593,7 @@ class AsyncLoopContext(LoopContext):
 
     @staticmethod
     def _to_iterator(  # type: ignore
-        iterable: t.Union[t.Iterable[V], t.AsyncIterable[V]],
+        iterable: t.Iterable[V] | t.AsyncIterable[V],
     ) -> t.AsyncIterator[V]:
         return auto_aiter(iterable)
 
@@ -644,7 +646,7 @@ class AsyncLoopContext(LoopContext):
     def __aiter__(self) -> "AsyncLoopContext":
         return self
 
-    async def __anext__(self) -> t.Tuple[t.Any, "AsyncLoopContext"]:
+    async def __anext__(self) -> tuple[t.Any, "AsyncLoopContext"]:
         if self._after is not missing:
             rv = self._after
             self._after = missing
@@ -665,11 +667,11 @@ class Macro:
         environment: "Environment",
         func: t.Callable[..., str],
         name: str,
-        arguments: t.List[str],
+        arguments: list[str],
         catch_kwargs: bool,
         catch_varargs: bool,
         caller: bool,
-        default_autoescape: t.Optional[bool] = None,
+        default_autoescape: bool | None = None,
     ):
         self._environment = environment
         self._func = func
@@ -767,7 +769,7 @@ class Macro:
 
         return self._invoke(arguments, autoescape)
 
-    async def _async_invoke(self, arguments: t.List[t.Any], autoescape: bool) -> str:
+    async def _async_invoke(self, arguments: list[t.Any], autoescape: bool) -> str:
         rv = await self._func(*arguments)  # type: ignore
 
         if autoescape:
@@ -775,7 +777,7 @@ class Macro:
 
         return rv  # type: ignore
 
-    def _invoke(self, arguments: t.List[t.Any], autoescape: bool) -> str:
+    def _invoke(self, arguments: list[t.Any], autoescape: bool) -> str:
         if self._environment.is_async:
             return self._async_invoke(arguments, autoescape)  # type: ignore
 
@@ -792,8 +794,8 @@ class Macro:
 
 
 class Undefined:
-    """The default undefined type.  This undefined type can be printed and
-    iterated over, but every other access will raise an :exc:`UndefinedError`:
+    """The default undefined type. This can be printed, iterated, and treated as
+    a boolean. Any other operation will raise an :exc:`UndefinedError`.
 
     >>> foo = Undefined(name='foo')
     >>> str(foo)
@@ -815,10 +817,10 @@ class Undefined:
 
     def __init__(
         self,
-        hint: t.Optional[str] = None,
+        hint: str | None = None,
         obj: t.Any = missing,
-        name: t.Optional[str] = None,
-        exc: t.Type[TemplateRuntimeError] = UndefinedError,
+        name: str | None = None,
+        exc: type[TemplateRuntimeError] = UndefinedError,
     ) -> None:
         self._undefined_hint = hint
         self._undefined_obj = obj
@@ -858,7 +860,11 @@ class Undefined:
 
     @internalcode
     def __getattr__(self, name: str) -> t.Any:
-        if name[:2] == "__":
+        # Raise AttributeError on requests for names that appear to be unimplemented
+        # dunder methods to keep Python's internal protocol probing behaviors working
+        # properly in cases where another exception type could cause unexpected or
+        # difficult-to-diagnose failures.
+        if name[:2] == "__" and name[-2:] == "__":
             raise AttributeError(name)
 
         return self._fail_with_undefined_error()
@@ -904,8 +910,8 @@ class Undefined:
 
 
 def make_logging_undefined(
-    logger: t.Optional["logging.Logger"] = None, base: t.Type[Undefined] = Undefined
-) -> t.Type[Undefined]:
+    logger: t.Optional["logging.Logger"] = None, base: type[Undefined] = Undefined
+) -> type[Undefined]:
     """Given a logger object this returns a new undefined class that will
     log certain failures.  It will log iterations and printing.  If no
     logger is given a default logger is created.
@@ -982,10 +988,20 @@ class ChainableUndefined(Undefined):
     def __html__(self) -> str:
         return str(self)
 
-    def __getattr__(self, _: str) -> "ChainableUndefined":
+    def __getattr__(self, name: str) -> "ChainableUndefined":
+        # Raise AttributeError on requests for names that appear to be unimplemented
+        # dunder methods to avoid confusing Python with truthy non-method objects that
+        # do not implement the protocol being probed for. e.g., copy.copy(Undefined())
+        # fails spectacularly if getattr(Undefined(), '__setstate__') returns an
+        # Undefined object instead of raising AttributeError to signal that it does not
+        # support that style of object initialization.
+        if name[:2] == "__" and name[-2:] == "__":
+            raise AttributeError(name)
+
         return self
 
-    __getitem__ = __getattr__  # type: ignore
+    def __getitem__(self, _name: str) -> "ChainableUndefined":  # type: ignore[override]
+        return self
 
 
 class DebugUndefined(Undefined):
@@ -1044,13 +1060,3 @@ class StrictUndefined(Undefined):
     __iter__ = __str__ = __len__ = Undefined._fail_with_undefined_error
     __eq__ = __ne__ = __bool__ = __hash__ = Undefined._fail_with_undefined_error
     __contains__ = Undefined._fail_with_undefined_error
-
-
-# Remove slots attributes, after the metaclass is applied they are
-# unneeded and contain wrong data for subclasses.
-del (
-    Undefined.__slots__,
-    ChainableUndefined.__slots__,
-    DebugUndefined.__slots__,
-    StrictUndefined.__slots__,
-)

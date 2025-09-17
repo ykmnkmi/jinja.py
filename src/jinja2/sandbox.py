@@ -8,6 +8,7 @@ import typing as t
 from _string import formatter_field_name_split  # type: ignore
 from collections import abc
 from collections import deque
+from functools import update_wrapper
 from string import Formatter
 
 from markupsafe import EscapeFormatter
@@ -24,10 +25,10 @@ F = t.TypeVar("F", bound=t.Callable[..., t.Any])
 MAX_RANGE = 100000
 
 #: Unsafe function attributes.
-UNSAFE_FUNCTION_ATTRIBUTES: t.Set[str] = set()
+UNSAFE_FUNCTION_ATTRIBUTES: set[str] = set()
 
 #: Unsafe method attributes. Function attributes are unsafe for methods too.
-UNSAFE_METHOD_ATTRIBUTES: t.Set[str] = set()
+UNSAFE_METHOD_ATTRIBUTES: set[str] = set()
 
 #: unsafe generator attributes.
 UNSAFE_GENERATOR_ATTRIBUTES = {"gi_frame", "gi_code"}
@@ -38,7 +39,7 @@ UNSAFE_COROUTINE_ATTRIBUTES = {"cr_frame", "cr_code"}
 #: unsafe attributes on async generators
 UNSAFE_ASYNC_GENERATOR_ATTRIBUTES = {"ag_code", "ag_frame"}
 
-_mutable_spec: t.Tuple[t.Tuple[t.Type[t.Any], t.FrozenSet[str]], ...] = (
+_mutable_spec: tuple[tuple[type[t.Any], frozenset[str]], ...] = (
     (
         abc.MutableSet,
         frozenset(
@@ -60,7 +61,9 @@ _mutable_spec: t.Tuple[t.Tuple[t.Type[t.Any], t.FrozenSet[str]], ...] = (
     ),
     (
         abc.MutableSequence,
-        frozenset(["append", "reverse", "insert", "sort", "extend", "remove"]),
+        frozenset(
+            ["append", "clear", "pop", "reverse", "insert", "sort", "extend", "remove"]
+        ),
     ),
     (
         deque,
@@ -79,20 +82,6 @@ _mutable_spec: t.Tuple[t.Tuple[t.Type[t.Any], t.FrozenSet[str]], ...] = (
         ),
     ),
 )
-
-
-def inspect_format_method(callable: t.Callable[..., t.Any]) -> t.Optional[str]:
-    if not isinstance(
-        callable, (types.MethodType, types.BuiltinMethodType)
-    ) or callable.__name__ not in ("format", "format_map"):
-        return None
-
-    obj = callable.__self__
-
-    if isinstance(obj, str):
-        return obj
-
-    return None
 
 
 def safe_range(*args: int) -> range:
@@ -201,7 +190,7 @@ class SandboxedEnvironment(Environment):
     #: default callback table for the binary operators.  A copy of this is
     #: available on each instance of a sandboxed environment as
     #: :attr:`binop_table`
-    default_binop_table: t.Dict[str, t.Callable[[t.Any, t.Any], t.Any]] = {
+    default_binop_table: dict[str, t.Callable[[t.Any, t.Any], t.Any]] = {
         "+": operator.add,
         "-": operator.sub,
         "*": operator.mul,
@@ -214,7 +203,7 @@ class SandboxedEnvironment(Environment):
     #: default callback table for the unary operators.  A copy of this is
     #: available on each instance of a sandboxed environment as
     #: :attr:`unop_table`
-    default_unop_table: t.Dict[str, t.Callable[[t.Any], t.Any]] = {
+    default_unop_table: dict[str, t.Callable[[t.Any], t.Any]] = {
         "+": operator.pos,
         "-": operator.neg,
     }
@@ -233,7 +222,7 @@ class SandboxedEnvironment(Environment):
     #: interested in.
     #:
     #: .. versionadded:: 2.6
-    intercepted_binops: t.FrozenSet[str] = frozenset()
+    intercepted_binops: frozenset[str] = frozenset()
 
     #: a set of unary operators that should be intercepted.  Each operator
     #: that is added to this set (empty by default) is delegated to the
@@ -248,7 +237,7 @@ class SandboxedEnvironment(Environment):
     #: interested in.
     #:
     #: .. versionadded:: 2.6
-    intercepted_unops: t.FrozenSet[str] = frozenset()
+    intercepted_unops: frozenset[str] = frozenset()
 
     def __init__(self, *args: t.Any, **kwargs: t.Any) -> None:
         super().__init__(*args, **kwargs)
@@ -296,9 +285,7 @@ class SandboxedEnvironment(Environment):
         """
         return self.unop_table[operator](arg)
 
-    def getitem(
-        self, obj: t.Any, argument: t.Union[str, t.Any]
-    ) -> t.Union[t.Any, Undefined]:
+    def getitem(self, obj: t.Any, argument: str | t.Any) -> t.Any | Undefined:
         """Subscribe an object from sandboxed code."""
         try:
             return obj[argument]
@@ -314,12 +301,15 @@ class SandboxedEnvironment(Environment):
                     except AttributeError:
                         pass
                     else:
+                        fmt = self.wrap_str_format(value)
+                        if fmt is not None:
+                            return fmt
                         if self.is_safe_attribute(obj, argument, value):
                             return value
                         return self.unsafe_undefined(obj, argument)
         return self.undefined(obj=obj, name=argument)
 
-    def getattr(self, obj: t.Any, attribute: str) -> t.Union[t.Any, Undefined]:
+    def getattr(self, obj: t.Any, attribute: str) -> t.Any | Undefined:
         """Subscribe an object from sandboxed code and prefer the
         attribute.  The attribute passed *must* be a bytestring.
         """
@@ -331,6 +321,9 @@ class SandboxedEnvironment(Environment):
             except (TypeError, LookupError):
                 pass
         else:
+            fmt = self.wrap_str_format(value)
+            if fmt is not None:
+                return fmt
             if self.is_safe_attribute(obj, attribute, value):
                 return value
             return self.unsafe_undefined(obj, attribute)
@@ -346,34 +339,49 @@ class SandboxedEnvironment(Environment):
             exc=SecurityError,
         )
 
-    def format_string(
-        self,
-        s: str,
-        args: t.Tuple[t.Any, ...],
-        kwargs: t.Dict[str, t.Any],
-        format_func: t.Optional[t.Callable[..., t.Any]] = None,
-    ) -> str:
-        """If a format call is detected, then this is routed through this
-        method so that our safety sandbox can be used for it.
+    def wrap_str_format(self, value: t.Any) -> t.Callable[..., str] | None:
+        """If the given value is a ``str.format`` or ``str.format_map`` method,
+        return a new function than handles sandboxing. This is done at access
+        rather than in :meth:`call`, so that calls made without ``call`` are
+        also sandboxed.
         """
+        if not isinstance(
+            value, (types.MethodType, types.BuiltinMethodType)
+        ) or value.__name__ not in ("format", "format_map"):
+            return None
+
+        f_self: t.Any = value.__self__
+
+        if not isinstance(f_self, str):
+            return None
+
+        str_type: type[str] = type(f_self)
+        is_format_map = value.__name__ == "format_map"
         formatter: SandboxedFormatter
-        if isinstance(s, Markup):
-            formatter = SandboxedEscapeFormatter(self, escape=s.escape)
+
+        if isinstance(f_self, Markup):
+            formatter = SandboxedEscapeFormatter(self, escape=f_self.escape)
         else:
             formatter = SandboxedFormatter(self)
 
-        if format_func is not None and format_func.__name__ == "format_map":
-            if len(args) != 1 or kwargs:
-                raise TypeError(
-                    "format_map() takes exactly one argument"
-                    f" {len(args) + (kwargs is not None)} given"
-                )
+        vformat = formatter.vformat
 
-            kwargs = args[0]
-            args = ()
+        def wrapper(*args: t.Any, **kwargs: t.Any) -> str:
+            if is_format_map:
+                if kwargs:
+                    raise TypeError("format_map() takes no keyword arguments")
 
-        rv = formatter.vformat(s, args, kwargs)
-        return type(s)(rv)
+                if len(args) != 1:
+                    raise TypeError(
+                        f"format_map() takes exactly one argument ({len(args)} given)"
+                    )
+
+                kwargs = args[0]
+                args = ()
+
+            return str_type(vformat(f_self, args, kwargs))
+
+        return update_wrapper(wrapper, value)
 
     def call(
         __self,  # noqa: B902
@@ -383,9 +391,6 @@ class SandboxedEnvironment(Environment):
         **kwargs: t.Any,
     ) -> t.Any:
         """Call an object from sandboxed code."""
-        fmt = inspect_format_method(__obj)
-        if fmt is not None:
-            return __self.format_string(fmt, args, kwargs, __obj)
 
         # the double prefixes are to avoid double keyword argument
         # errors when proxying the call.
@@ -414,7 +419,7 @@ class SandboxedFormatter(Formatter):
 
     def get_field(
         self, field_name: str, args: t.Sequence[t.Any], kwargs: t.Mapping[str, t.Any]
-    ) -> t.Tuple[t.Any, str]:
+    ) -> tuple[t.Any, str]:
         first, rest = formatter_field_name_split(field_name)
         obj = self.get_value(first, args, kwargs)
         for is_attr, i in rest:

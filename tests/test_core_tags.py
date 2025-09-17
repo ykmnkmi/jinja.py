@@ -191,9 +191,7 @@ class TestForLoop:
 
     def test_reversed_bug(self, env):
         tmpl = env.from_string(
-            "{% for i in items %}{{ i }}"
-            "{% if not loop.last %}"
-            ",{% endif %}{% endfor %}"
+            "{% for i in items %}{{ i }}{% if not loop.last %},{% endif %}{% endfor %}"
         )
         assert tmpl.render(items=reversed([3, 2, 1])) == "1,2,3"
 
@@ -534,6 +532,14 @@ class TestSet:
             "{% set x.b = 37 %}"
             "{% endmacro %}"
             "{{ magic(ns) }}"
+            "{{ ns.a }}|{{ ns.b }}"
+        )
+        assert tmpl.render() == "13|37"
+
+    def test_namespace_set_tuple(self, env_trim):
+        tmpl = env_trim.from_string(
+            "{% set ns = namespace(a=12, b=36) %}"
+            "{% set ns.a, ns.b = ns.a + 1, ns.b + 1 %}"
             "{{ ns.a }}|{{ ns.b }}"
         )
         assert tmpl.render() == "13|37"

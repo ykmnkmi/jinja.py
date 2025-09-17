@@ -196,6 +196,7 @@ class TestFilter:
             ("abc", "0"),
             ("32.32", "32"),
             ("12345678901234567890", "12345678901234567890"),
+            ("1e10000", "0"),
         ),
     )
     def test_int(self, env, value, expect):
@@ -356,7 +357,7 @@ class TestFilter:
     def test_urlize(self, env):
         tmpl = env.from_string('{{ "foo example.org bar"|urlize }}')
         assert tmpl.render() == (
-            'foo <a href="https://example.org" rel="noopener">' "example.org</a> bar"
+            'foo <a href="https://example.org" rel="noopener">example.org</a> bar'
         )
         tmpl = env.from_string('{{ "foo http://www.example.com/ bar"|urlize }}')
         assert tmpl.render() == (

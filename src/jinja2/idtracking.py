@@ -3,6 +3,9 @@ import typing as t
 from . import nodes
 from .visitor import NodeVisitor
 
+if t.TYPE_CHECKING:
+    import typing_extensions as te
+
 VAR_LOAD_PARAMETER = "param"
 VAR_LOAD_RESOLVE = "resolve"
 VAR_LOAD_ALIAS = "alias"
@@ -29,7 +32,7 @@ def symbols_for_node(
 
 class Symbols:
     def __init__(
-        self, parent: t.Optional["Symbols"] = None, level: t.Optional[int] = None
+        self, parent: t.Optional["Symbols"] = None, level: int | None = None
     ) -> None:
         if level is None:
             if parent is None:
@@ -39,24 +42,22 @@ class Symbols:
 
         self.level: int = level
         self.parent = parent
-        self.refs: t.Dict[str, str] = {}
-        self.loads: t.Dict[str, t.Any] = {}
-        self.stores: t.Set[str] = set()
+        self.refs: dict[str, str] = {}
+        self.loads: dict[str, t.Any] = {}
+        self.stores: set[str] = set()
 
     def analyze_node(self, node: nodes.Node, **kwargs: t.Any) -> None:
         visitor = RootVisitor(self)
         visitor.visit(node, **kwargs)
 
-    def _define_ref(
-        self, name: str, load: t.Optional[t.Tuple[str, t.Optional[str]]] = None
-    ) -> str:
+    def _define_ref(self, name: str, load: tuple[str, str | None] | None = None) -> str:
         ident = f"l_{self.level}_{name}"
         self.refs[name] = ident
         if load is not None:
             self.loads[ident] = load
         return ident
 
-    def find_load(self, target: str) -> t.Optional[t.Any]:
+    def find_load(self, target: str) -> t.Any | None:
         if target in self.loads:
             return self.loads[target]
 
@@ -65,7 +66,7 @@ class Symbols:
 
         return None
 
-    def find_ref(self, name: str) -> t.Optional[str]:
+    def find_ref(self, name: str) -> str | None:
         if name in self.refs:
             return self.refs[name]
 
@@ -83,7 +84,7 @@ class Symbols:
             )
         return rv
 
-    def copy(self) -> "Symbols":
+    def copy(self) -> "te.Self":
         rv = object.__new__(self.__class__)
         rv.__dict__.update(self.__dict__)
         rv.refs = self.refs.copy()
@@ -118,23 +119,20 @@ class Symbols:
             self._define_ref(name, load=(VAR_LOAD_RESOLVE, name))
 
     def branch_update(self, branch_symbols: t.Sequence["Symbols"]) -> None:
-        stores: t.Dict[str, int] = {}
+        stores: set[str] = set()
+
         for branch in branch_symbols:
-            for target in branch.stores:
-                if target in self.stores:
-                    continue
-                stores[target] = stores.get(target, 0) + 1
+            stores.update(branch.stores)
+
+        stores.difference_update(self.stores)
 
         for sym in branch_symbols:
             self.refs.update(sym.refs)
             self.loads.update(sym.loads)
             self.stores.update(sym.stores)
 
-        for name, branch_count in stores.items():
-            if branch_count == len(branch_symbols):
-                continue
-
-            target = self.find_ref(name)  # type: ignore
+        for name in stores:
+            target = self.find_ref(name)
             assert target is not None, "should not happen"
 
             if self.parent is not None:
@@ -144,9 +142,9 @@ class Symbols:
                     continue
             self.loads[target] = (VAR_LOAD_RESOLVE, name)
 
-    def dump_stores(self) -> t.Dict[str, str]:
-        rv: t.Dict[str, str] = {}
-        node: t.Optional[Symbols] = self
+    def dump_stores(self) -> dict[str, str]:
+        rv: dict[str, str] = {}
+        node: Symbols | None = self
 
         while node is not None:
             for name in sorted(node.stores):
@@ -157,9 +155,9 @@ class Symbols:
 
         return rv
 
-    def dump_param_targets(self) -> t.Set[str]:
+    def dump_param_targets(self) -> set[str]:
         rv = set()
-        node: t.Optional[Symbols] = self
+        node: Symbols | None = self
 
         while node is not None:
             for target, (instr, _) in self.loads.items():
